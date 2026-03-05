@@ -1,0 +1,24 @@
+{
+  "name": "bigger-pockets-brain",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "bp": "./index.ts"
+  },
+  "scripts": {
+    "start": "bun run index.ts",
+    "test": "bun test",
+    "db:init": "bun run src/scripts/init-db.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "sqlite-vec": "^0.1.7-alpha.2"
+  }
+}
