@@ -8,7 +8,7 @@ import { initializeDatabase, EpisodeRepository } from "../src/db";
 
 const BASE_URL = "https://www.biggerpockets.com/blog/wp-json/wp/v2";
 const LATEST_EPISODE = 1246;
-const DELAY_MS = 2000; // 2 seconds between requests to avoid Cloudflare rate limits
+const DELAY_MS = 3000; // 3 seconds between requests to avoid Cloudflare rate limits
 
 interface Post {
   id: number;
