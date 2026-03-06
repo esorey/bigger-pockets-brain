@@ -5,5 +5,5 @@ export {
   runSchemaMigrations,
 } from "./init";
 export { CREATE_SCHEMA_STATEMENTS, EPISODE_STATUS_VALUES } from "./schema";
-export { EpisodeRepository, ChunkRepository, withTransaction } from "./repository";
+export { EpisodeRepository, ChunkRepository, EmbeddingRepository, withTransaction } from "./repository";
 export type { DatabaseInitOptions, SqliteDatabase } from "./init";

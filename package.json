@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
+    "openai": "^6.27.0",
     "sqlite-vec": "^0.1.7-alpha.2"
   }
 }

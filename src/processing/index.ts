@@ -11,3 +11,11 @@ export {
   chunkTranscripts,
   type ChunkOptions,
 } from "./chunker";
+
+export {
+  TextEmbedder,
+  cosineSimilarity,
+  findTopK,
+  type EmbedResult,
+  type BatchEmbedResult,
+} from "./embedder";

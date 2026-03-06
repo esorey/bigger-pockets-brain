@@ -29,6 +29,16 @@ export const CREATE_SCHEMA_STATEMENTS = [
     end_char INTEGER NOT NULL,
     UNIQUE(episode_number, chunk_index)
   );`,
+  `CREATE TABLE IF NOT EXISTS embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference_id INTEGER NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('summary', 'chunk')),
+    episode_number INTEGER NOT NULL REFERENCES episodes(episode_number),
+    vector BLOB NOT NULL
+  );`,
   "CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);",
   "CREATE INDEX IF NOT EXISTS idx_chunks_episode ON chunks(episode_number);",
+  "CREATE INDEX IF NOT EXISTS idx_embeddings_type ON embeddings(type);",
+  "CREATE INDEX IF NOT EXISTS idx_embeddings_episode ON embeddings(episode_number);",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_ref ON embeddings(type, reference_id);",
 ] as const;

@@ -1,5 +1,5 @@
 import type { Database, Statement } from "bun:sqlite";
-import type { Episode, EpisodeStatus, Chunk } from "../types";
+import type { Episode, EpisodeStatus, Chunk, EmbeddingType, EmbeddingRecord } from "../types";
 
 export class EpisodeRepository {
   private readonly db: Database;
@@ -173,6 +173,84 @@ export class ChunkRepository {
   }
 }
 
+export class EmbeddingRepository {
+  private readonly db: Database;
+  private readonly stmtInsert: Statement;
+  private readonly stmtGetByType: Statement;
+  private readonly stmtGetByEpisode: Statement;
+  private readonly stmtGetAll: Statement;
+  private readonly stmtDelete: Statement;
+
+  constructor(db: Database) {
+    this.db = db;
+
+    this.stmtInsert = db.prepare(`
+      INSERT OR REPLACE INTO embeddings (reference_id, type, episode_number, vector)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    this.stmtGetByType = db.prepare(
+      "SELECT * FROM embeddings WHERE type = ?"
+    );
+
+    this.stmtGetByEpisode = db.prepare(
+      "SELECT * FROM embeddings WHERE episode_number = ?"
+    );
+
+    this.stmtGetAll = db.prepare("SELECT * FROM embeddings");
+
+    this.stmtDelete = db.prepare(
+      "DELETE FROM embeddings WHERE type = ? AND reference_id = ?"
+    );
+  }
+
+  saveEmbedding(
+    referenceId: number,
+    type: EmbeddingType,
+    episodeNumber: number,
+    vector: Float32Array
+  ): void {
+    const buffer = Buffer.from(vector.buffer);
+    this.stmtInsert.run(referenceId, type, episodeNumber, buffer);
+  }
+
+  saveEmbeddings(
+    embeddings: { referenceId: number; type: EmbeddingType; episodeNumber: number; vector: Float32Array }[]
+  ): void {
+    const insertMany = this.db.transaction((embs: typeof embeddings) => {
+      for (const emb of embs) {
+        const buffer = Buffer.from(emb.vector.buffer);
+        this.stmtInsert.run(emb.referenceId, emb.type, emb.episodeNumber, buffer);
+      }
+    });
+    insertMany(embeddings);
+  }
+
+  getEmbeddingsByType(type: EmbeddingType): EmbeddingRecord[] {
+    const rows = this.stmtGetByType.all(type) as EmbeddingRow[];
+    return rows.map(rowToEmbedding);
+  }
+
+  getEmbeddingsForEpisode(episodeNumber: number): EmbeddingRecord[] {
+    const rows = this.stmtGetByEpisode.all(episodeNumber) as EmbeddingRow[];
+    return rows.map(rowToEmbedding);
+  }
+
+  getAllEmbeddings(): EmbeddingRecord[] {
+    const rows = this.stmtGetAll.all() as EmbeddingRow[];
+    return rows.map(rowToEmbedding);
+  }
+
+  deleteEmbedding(type: EmbeddingType, referenceId: number): void {
+    this.stmtDelete.run(type, referenceId);
+  }
+
+  count(): number {
+    const result = this.db.query("SELECT COUNT(*) as cnt FROM embeddings").get() as { cnt: number };
+    return result.cnt;
+  }
+}
+
 // Row types from database
 interface EpisodeRow {
   episode_number: number;
@@ -194,6 +272,14 @@ interface ChunkRow {
   chunk_text: string;
   start_char: number;
   end_char: number;
+}
+
+interface EmbeddingRow {
+  id: number;
+  reference_id: number;
+  type: EmbeddingType;
+  episode_number: number;
+  vector: Buffer;
 }
 
 function rowToEpisode(row: EpisodeRow): Episode {
@@ -219,6 +305,16 @@ function rowToChunk(row: ChunkRow): Chunk {
     chunkText: row.chunk_text,
     startChar: row.start_char,
     endChar: row.end_char,
+  };
+}
+
+function rowToEmbedding(row: EmbeddingRow): EmbeddingRecord {
+  return {
+    id: row.id,
+    referenceId: row.reference_id,
+    type: row.type,
+    episodeNumber: row.episode_number,
+    vector: new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4),
   };
 }
 
