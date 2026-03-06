@@ -1,7 +1,7 @@
 /**
- * Discovery script - finds all BiggerPockets podcast episodes
+ * Discovery + Fetch script - downloads all BiggerPockets podcast episodes
  * Fetches each episode by slug directly: real-estate-{N}
- * Counts down from latest (1246) to 1
+ * Counts down from latest (1246) to 1, extracting transcripts
  */
 
 import { initializeDatabase, EpisodeRepository } from "../src/db";
@@ -16,6 +16,7 @@ interface Post {
   title: { rendered: string };
   date: string;
   link: string;
+  content: { rendered: string };
 }
 
 function cleanHtml(html: string): string {
@@ -23,8 +24,41 @@ function cleanHtml(html: string): string {
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
     .replace(/&[^;]+;/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractTranscript(html: string): string | null {
+  // Look for transcript section patterns
+  const transcriptPatterns = [
+    /<h[23][^>]*>.*?transcript.*?<\/h[23]>([\s\S]*?)(?=<h[23]|$)/i,
+    /class="[^"]*transcript[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+  ];
+
+  for (const pattern of transcriptPatterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      return cleanHtml(match[1]);
+    }
+  }
+
+  // Fallback: extract text from all substantial paragraphs
+  const paragraphs: string[] = [];
+  const pPattern = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  let pMatch;
+  while ((pMatch = pPattern.exec(html)) !== null) {
+    const text = cleanHtml(pMatch[1] || "");
+    if (text.length > 50) {
+      paragraphs.push(text);
+    }
+  }
+
+  return paragraphs.length > 0 ? paragraphs.join("\n\n") : null;
 }
 
 interface FetchResult {
@@ -35,7 +69,7 @@ interface FetchResult {
 
 async function fetchEpisode(episodeNumber: number): Promise<FetchResult> {
   const slug = `real-estate-${episodeNumber}`;
-  const url = `${BASE_URL}/posts?slug=${slug}&_fields=id,slug,title,date,link`;
+  const url = `${BASE_URL}/posts?slug=${slug}&_fields=id,slug,title,date,link,content`;
 
   const res = await fetch(url, {
     headers: {
@@ -60,44 +94,76 @@ async function main() {
   const { db } = initializeDatabase({ dbPath: "./data/biggerpockets.db" });
   const repo = new EpisodeRepository(db);
 
-  console.log(`[DISCOVERY] Fetching episodes ${LATEST_EPISODE} down to 1...`);
+  // Find where to resume from - skip already fetched episodes
+  const existing = new Set<number>();
+  for (const ep of repo.getAllEpisodes()) {
+    if (ep.status === "fetched" || ep.status === "missing") {
+      existing.add(ep.episodeNumber);
+    }
+  }
 
-  let found = 0;
-  let missing = 0;
-
+  const toFetch = [];
   for (let n = LATEST_EPISODE; n >= 1; n--) {
+    if (!existing.has(n)) {
+      toFetch.push(n);
+    }
+  }
+
+  if (toFetch.length === 0) {
+    console.log(`[FETCH] All ${LATEST_EPISODE} episodes already downloaded.`);
+    db.close();
+    return;
+  }
+
+  console.log(`[FETCH] ${existing.size} already done, ${toFetch.length} remaining (${toFetch[0]} down to ${toFetch[toFetch.length - 1]})...`);
+
+  let fetched = 0;
+  let noTranscript = 0;
+  let notFound = 0;
+
+  for (const n of toFetch) {
     const { post, rateLimited, retryAfter } = await fetchEpisode(n);
 
     if (rateLimited) {
       const retryMin = retryAfter ? Math.ceil(retryAfter / 60) : "?";
-      console.log(`[DISCOVERY] Rate limited at episode ${n}. Retry-After: ${retryAfter}s (~${retryMin} min)`);
-      console.log(`[DISCOVERY] Found ${found}, missing ${missing}. Resume from episode ${n} later.`);
+      console.log(`[FETCH] Rate limited at episode ${n}. Retry-After: ${retryAfter}s (~${retryMin} min)`);
+      console.log(`[FETCH] Fetched ${fetched}, no transcript ${noTranscript}, not found ${notFound}. Resume from ${n}.`);
       break;
     }
 
     if (post) {
+      const transcript = extractTranscript(post.content.rendered);
+      const status = transcript ? "fetched" : "missing";
+
       repo.upsertEpisode({
         episodeNumber: n,
         slug: post.slug,
         title: cleanHtml(post.title.rendered),
         publishedAt: new Date(post.date),
         url: post.link,
-        status: "pending",
+        transcriptText: transcript,
+        status,
+        fetchedAt: new Date(),
       });
-      found++;
 
-      if (found % 50 === 0) {
-        console.log(`[DISCOVERY] Progress: ${found} found, ${missing} missing (at episode ${n})`);
+      if (transcript) {
+        fetched++;
+      } else {
+        noTranscript++;
+      }
+
+      if ((fetched + noTranscript) % 50 === 0) {
+        console.log(`[FETCH] Progress: ${fetched} fetched, ${noTranscript} no transcript, ${notFound} not found (at ep ${n})`);
       }
     } else {
-      missing++;
+      notFound++;
     }
 
     await new Promise((r) => setTimeout(r, DELAY_MS));
   }
 
   db.close();
-  console.log(`[DISCOVERY] Complete. ${found} episodes found, ${missing} missing.`);
+  console.log(`[FETCH] Complete. ${fetched} fetched, ${noTranscript} no transcript, ${notFound} not found.`);
 }
 
 main().catch((err) => {
