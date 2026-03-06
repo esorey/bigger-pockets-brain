@@ -61,16 +61,16 @@ export class EpisodeRepository {
 
   upsertEpisode(episode: Partial<Episode> & { episodeNumber: number; slug: string }): void {
     this.stmtUpsert.run({
-      $episode_number: episode.episodeNumber,
-      $slug: episode.slug,
-      $title: episode.title ?? null,
-      $published_at: episode.publishedAt?.toISOString() ?? null,
-      $url: episode.url ?? null,
-      $transcript_text: episode.transcriptText ?? null,
-      $summary: episode.summary ?? null,
-      $status: episode.status ?? "pending",
-      $fetched_at: episode.fetchedAt?.toISOString() ?? null,
-      $summarized_at: episode.summarizedAt?.toISOString() ?? null,
+      episode_number: episode.episodeNumber,
+      slug: episode.slug,
+      title: episode.title ?? null,
+      published_at: episode.publishedAt?.toISOString() ?? null,
+      url: episode.url ?? null,
+      transcript_text: episode.transcriptText ?? null,
+      summary: episode.summary ?? null,
+      status: episode.status ?? "pending",
+      fetched_at: episode.fetchedAt?.toISOString() ?? null,
+      summarized_at: episode.summarizedAt?.toISOString() ?? null,
     });
   }
 
