@@ -8,7 +8,7 @@ import { initializeDatabase, EpisodeRepository } from "../src/db";
 
 const BASE_URL = "https://www.biggerpockets.com/blog/wp-json/wp/v2";
 const LATEST_EPISODE = 1246;
-const DELAY_MS = 500; // Be polite to the server
+const DELAY_MS = 2000; // 2 seconds between requests to avoid Cloudflare rate limits
 
 interface Post {
   id: number;
@@ -30,6 +30,7 @@ function cleanHtml(html: string): string {
 interface FetchResult {
   post: Post | null;
   rateLimited: boolean;
+  retryAfter?: number;
 }
 
 async function fetchEpisode(episodeNumber: number): Promise<FetchResult> {
@@ -44,7 +45,8 @@ async function fetchEpisode(episodeNumber: number): Promise<FetchResult> {
   });
 
   if (res.status === 429) {
-    return { post: null, rateLimited: true };
+    const retryAfter = parseInt(res.headers.get("retry-after") || "0", 10);
+    return { post: null, rateLimited: true, retryAfter };
   }
   if (res.status >= 400) {
     throw new Error(`HTTP ${res.status}`);
@@ -64,10 +66,12 @@ async function main() {
   let missing = 0;
 
   for (let n = LATEST_EPISODE; n >= 1; n--) {
-    const { post, rateLimited } = await fetchEpisode(n);
+    const { post, rateLimited, retryAfter } = await fetchEpisode(n);
 
     if (rateLimited) {
-      console.log(`[DISCOVERY] Rate limited at episode ${n}. Found ${found}, missing ${missing}. Resume later.`);
+      const retryMin = retryAfter ? Math.ceil(retryAfter / 60) : "?";
+      console.log(`[DISCOVERY] Rate limited at episode ${n}. Retry-After: ${retryAfter}s (~${retryMin} min)`);
+      console.log(`[DISCOVERY] Found ${found}, missing ${missing}. Resume from episode ${n} later.`);
       break;
     }
 
