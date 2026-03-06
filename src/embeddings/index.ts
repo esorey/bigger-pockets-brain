@@ -16,6 +16,18 @@ export type {
 
 export { OPENAI_PROVIDER, VOYAGE_PROVIDER } from './types.ts';
 export { createOpenAIEmbeddingService } from './openai.ts';
+export {
+  embedSummaries,
+  getSummaryEmbeddingStats,
+  type EmbedSummariesOptions,
+  type EmbedSummariesResult,
+} from './summary-embeddings.ts';
+export {
+  embedChunks,
+  getChunkEmbeddingStats,
+  type EmbedChunksOptions,
+  type EmbedChunksResult,
+} from './chunk-embeddings.ts';
 
 import type { EmbeddingService, EmbeddingServiceOptions } from './types.ts';
 import type { EmbeddingProvider } from '../types/index.ts';

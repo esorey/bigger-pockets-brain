@@ -1,4 +1,4 @@
-import type { SearchResult } from "../types";
+import type { EmbeddingType, SearchResult } from "../types";
 
 export interface CommandContext {
   args: string[];
@@ -21,6 +21,18 @@ export class CLIError extends Error {
   }
 }
 
+export type SearchLayer = EmbeddingType | "both";
+
+export interface SearchCommandOptions {
+  query: string;
+  limit: number;
+  verbose: boolean;
+  layer: SearchLayer;
+}
+
+const DEFAULT_SEARCH_LIMIT = 10;
+const VALID_LAYERS: SearchLayer[] = ["summary", "chunk", "both"];
+
 export function formatError(error: unknown): string {
   if (error instanceof CLIError) {
     return `Error: ${error.message}`;
@@ -34,10 +46,15 @@ export function formatError(error: unknown): string {
   return `Error: ${String(error)}`;
 }
 
-export function formatSearchResults(results: SearchResult[]): string {
+export function formatSearchResults(
+  results: SearchResult[],
+  options: { verbose?: boolean } = {}
+): string {
   if (results.length === 0) {
     return "No matching episodes found.";
   }
+
+  const verbose = options.verbose ?? false;
 
   return results
     .map((r, i) => {
@@ -45,8 +62,15 @@ export function formatSearchResults(results: SearchResult[]): string {
         month: "short",
         year: "numeric",
       });
-      return `${i + 1}. Episode ${r.episodeNumber} - "${r.title}" (${date})
+      const base = `${i + 1}. Episode ${r.episodeNumber} - "${r.title}" (${date})
    → "${r.matchingSnippet}"`;
+
+      if (!verbose) {
+        return base;
+      }
+
+      return `${base}
+   [score=${r.similarity.toFixed(3)} layer=${r.matchType}]`;
     })
     .join("\n\n");
 }
@@ -65,8 +89,14 @@ Commands:
 Options:
   --help, -h         Show this help message
 
+Search Options:
+  --limit N          Number of results (default: 10)
+  --verbose          Show similarity score + matched layer
+  --layer <value>    Restrict to summary|chunk|both (default: both)
+
 Examples:
   bp search "house hacking strategies"
+  bp search "nurse quit job" --limit 5 --verbose --layer chunk
   bp summary 1246
   bp episode 803
 `.trim();
@@ -105,4 +135,62 @@ export function validateSearchQuery(args: string[]): string {
     throw new CLIError("Search query required");
   }
   return query;
+}
+
+export function parseSearchCommandOptions(args: string[]): SearchCommandOptions {
+  const queryTokens: string[] = [];
+  let limit = DEFAULT_SEARCH_LIMIT;
+  let verbose = false;
+  let layer: SearchLayer = "both";
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg === "--limit") {
+      const raw = args[i + 1];
+      if (!raw) {
+        throw new CLIError("--limit requires a value");
+      }
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        throw new CLIError(`Invalid --limit value: ${raw}`);
+      }
+      limit = parsed;
+      i++;
+      continue;
+    }
+
+    if (arg === "--verbose") {
+      verbose = true;
+      continue;
+    }
+
+    if (arg === "--layer") {
+      const raw = args[i + 1];
+      if (!raw) {
+        throw new CLIError("--layer requires a value (summary|chunk|both)");
+      }
+      if (!VALID_LAYERS.includes(raw as SearchLayer)) {
+        throw new CLIError(`Invalid --layer value: ${raw}`);
+      }
+      layer = raw as SearchLayer;
+      i++;
+      continue;
+    }
+
+    if (arg.startsWith("--")) {
+      throw new CLIError(`Unknown search option: ${arg}`);
+    }
+
+    queryTokens.push(arg);
+  }
+
+  const query = validateSearchQuery(queryTokens);
+
+  return {
+    query,
+    limit,
+    verbose,
+    layer,
+  };
 }

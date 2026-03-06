@@ -22,121 +22,75 @@ const DEFAULT_OVERLAP_WORDS = 50;
 /** Sentence-ending punctuation pattern */
 const SENTENCE_END = /[.!?]["'»]?\s+/g;
 
-/** Word boundary pattern */
-const WORD_BOUNDARY = /\s+/g;
-
 /**
- * Find word boundaries in text
- * Returns array of { start, end } for each word
+ * Split text into words with their positions
  */
-function findWordBoundaries(text: string): { start: number; end: number }[] {
-  const boundaries: { start: number; end: number }[] = [];
-  const words = text.split(WORD_BOUNDARY);
-  let pos = 0;
+function tokenize(text: string): { word: string; start: number; end: number }[] {
+  const tokens: { word: string; start: number; end: number }[] = [];
+  const regex = /\S+/g;
+  let match;
 
-  for (const word of words) {
-    if (word.length === 0) continue;
-
-    // Find actual position of word (accounting for whitespace)
-    const wordStart = text.indexOf(word, pos);
-    if (wordStart === -1) continue;
-
-    boundaries.push({
-      start: wordStart,
-      end: wordStart + word.length,
+  while ((match = regex.exec(text)) !== null) {
+    tokens.push({
+      word: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
     });
-    pos = wordStart + word.length;
   }
 
-  return boundaries;
+  return tokens;
 }
 
 /**
  * Find sentence boundaries in text
- * Returns array of character positions where sentences end
  */
-function findSentenceBoundaries(text: string): number[] {
-  const boundaries: number[] = [];
+function findSentenceEnds(text: string): Set<number> {
+  const ends = new Set<number>();
   let match;
 
   SENTENCE_END.lastIndex = 0;
   while ((match = SENTENCE_END.exec(text)) !== null) {
-    boundaries.push(match.index + match[0].length);
+    ends.add(match.index + match[0].length);
   }
 
-  return boundaries;
+  return ends;
 }
 
 /**
- * Find the best split point near a target position
- * Prefers sentence boundaries, falls back to word boundaries
+ * Find the best end position for a chunk
+ * Prefers sentence boundaries within 20% of target
  */
-function findBestSplitPoint(
-  text: string,
-  targetPos: number,
-  sentenceBoundaries: number[],
-  wordBoundaries: { start: number; end: number }[]
-): number {
-  // Look for sentence boundary within 20% of target
-  const tolerance = Math.round(targetPos * 0.2);
-  const minPos = Math.max(0, targetPos - tolerance);
-  const maxPos = Math.min(text.length, targetPos + tolerance);
+function findChunkEnd(
+  tokens: { word: string; start: number; end: number }[],
+  startToken: number,
+  targetWords: number,
+  sentenceEnds: Set<number>,
+  textLength: number
+): { endToken: number; endChar: number } {
+  const endToken = Math.min(startToken + targetWords, tokens.length);
 
-  // Find closest sentence boundary in range
-  let closestSentence = -1;
-  let closestDistance = Infinity;
+  if (endToken >= tokens.length) {
+    return { endToken: tokens.length, endChar: textLength };
+  }
 
-  for (const boundary of sentenceBoundaries) {
-    if (boundary >= minPos && boundary <= maxPos) {
-      const distance = Math.abs(boundary - targetPos);
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestSentence = boundary;
-      }
+  const targetChar = tokens[endToken - 1]?.end ?? textLength;
+  const tolerance = Math.round(targetWords * 0.2);
+
+  // Find tokens in tolerance range
+  const minToken = Math.max(startToken + 1, endToken - tolerance);
+  const maxToken = Math.min(tokens.length, endToken + tolerance);
+
+  // Look for sentence boundary in range
+  for (let i = minToken; i < maxToken; i++) {
+    const tokenEnd = tokens[i]?.end;
+    if (tokenEnd && sentenceEnds.has(tokenEnd)) {
+      // Found sentence boundary - check if there's whitespace after
+      return { endToken: i + 1, endChar: tokenEnd };
     }
   }
 
-  if (closestSentence !== -1) {
-    return closestSentence;
-  }
-
-  // Fall back to word boundary
-  for (const word of wordBoundaries) {
-    if (word.end >= minPos && word.end <= maxPos) {
-      // Return position after the word (include trailing space)
-      const afterWord = word.end;
-      const nextChar = text[afterWord];
-      if (nextChar && /\s/.test(nextChar)) {
-        return afterWord + 1;
-      }
-      return afterWord;
-    }
-  }
-
-  // Last resort: return target position
-  return Math.min(targetPos, text.length);
-}
-
-/**
- * Count words in text
- */
-function countWords(text: string): number {
-  return text.split(WORD_BOUNDARY).filter((w) => w.length > 0).length;
-}
-
-/**
- * Get character position after N words from start
- */
-function getPositionAfterWords(
-  wordBoundaries: { start: number; end: number }[],
-  wordCount: number
-): number {
-  if (wordCount >= wordBoundaries.length) {
-    const last = wordBoundaries[wordBoundaries.length - 1];
-    return last ? last.end : 0;
-  }
-  const word = wordBoundaries[wordCount];
-  return word ? word.start : 0;
+  // No sentence boundary - use word boundary
+  return { endToken, endChar: targetChar };
 }
 
 /**
@@ -155,14 +109,13 @@ export function chunkTranscript(
   const targetWords = options.targetWords ?? DEFAULT_TARGET_WORDS;
   const overlapWords = options.overlapWords ?? DEFAULT_OVERLAP_WORDS;
 
-  // Handle empty or very short text
-  const totalWords = countWords(text);
-  if (totalWords === 0) {
+  const tokens = tokenize(text);
+
+  if (tokens.length === 0) {
     return [];
   }
 
-  if (totalWords <= targetWords) {
-    // Single chunk for short transcripts
+  if (tokens.length <= targetWords) {
     return [
       {
         episodeNumber,
@@ -174,43 +127,24 @@ export function chunkTranscript(
     ];
   }
 
+  const sentenceEnds = findSentenceEnds(text);
   const chunks: Omit<Chunk, 'id'>[] = [];
-  const wordBoundaries = findWordBoundaries(text);
-  const sentenceBoundaries = findSentenceBoundaries(text);
+  const stepWords = targetWords - overlapWords;
 
   let chunkIndex = 0;
-  let startWordIndex = 0;
+  let startToken = 0;
 
-  while (startWordIndex < wordBoundaries.length) {
-    // Calculate target end position
-    const endWordIndex = Math.min(
-      startWordIndex + targetWords,
-      wordBoundaries.length
+  while (startToken < tokens.length) {
+    const startChar = tokens[startToken]?.start ?? 0;
+
+    const { endToken, endChar } = findChunkEnd(
+      tokens,
+      startToken,
+      targetWords,
+      sentenceEnds,
+      text.length
     );
 
-    // Get character positions
-    const startChar =
-      chunkIndex === 0
-        ? 0
-        : wordBoundaries[startWordIndex]?.start ?? 0;
-
-    const targetEndChar = getPositionAfterWords(wordBoundaries, endWordIndex);
-
-    // Find best split point
-    let endChar: number;
-    if (endWordIndex >= wordBoundaries.length) {
-      // Last chunk - go to end
-      endChar = text.length;
-    } else {
-      endChar = findBestSplitPoint(
-        text,
-        targetEndChar,
-        sentenceBoundaries,
-        wordBoundaries
-      );
-    }
-
-    // Extract chunk text
     const chunkText = text.slice(startChar, endChar).trim();
 
     if (chunkText.length > 0) {
@@ -224,14 +158,15 @@ export function chunkTranscript(
       chunkIndex++;
     }
 
-    // Move start position (accounting for overlap)
-    const wordsInChunk = countWords(chunkText);
-    const advanceWords = Math.max(1, wordsInChunk - overlapWords);
-    startWordIndex += advanceWords;
+    // Advance by step (targetWords - overlapWords) for overlap
+    startToken += stepWords;
 
-    // Safety check to prevent infinite loop
-    if (startWordIndex >= wordBoundaries.length) {
-      break;
+    // If we're near the end, make sure we don't skip the last part
+    if (startToken < tokens.length && startToken + targetWords >= tokens.length) {
+      // Position for final chunk that captures everything remaining
+      if (endToken >= tokens.length) {
+        break; // Already captured everything
+      }
     }
   }
 
